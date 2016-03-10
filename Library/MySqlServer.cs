@@ -6,14 +6,13 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 
-namespace MySql.Server
+namespace MySql.Server.Library
 {
     /**
      * A singleton class controlling test database initializing and cleanup
-     */ 
+     */
     public class MySqlServer : IDisposable
     {
-        //The Instance is running the private constructor. This way, the class is implemented as a singleton
         private static MySqlServer instance;
         public static MySqlServer Instance
         {
@@ -29,113 +28,104 @@ namespace MySql.Server
         }
 
 
-        private string _mysqlDirectory;
-        private string _dataDirectory;
-        private string _dataRootDirectory;
+        private readonly string _mysqlDirectory;
+        private readonly string _dataDirectory;
+        private readonly string _dataRootDirectory;
 
-        private IDBConnectionStringFactory _conStrFac;
+        private readonly IDBConnectionStringFactory _conStrFac;
 
         private MySqlConnection _myConnection;
-        public MySqlConnection Connection { 
-            get {
-                if (this._myConnection == null)
+        public MySqlConnection Connection
+        {
+            get
+            {
+                if (_myConnection == null)
                 {
-                    this.OpenConnection(this._conStrFac.Database());
+                    OpenConnection(_conStrFac.Database());
                 }
-                return this._myConnection; 
-            }  
+                return _myConnection;
+            }
         }
 
         private Process _process;
 
         private MySqlServer(IDBConnectionStringFactory conStrFac)
         {
-            this._mysqlDirectory = BaseDirHelper.GetBaseDir() + "\\tempServer";
-            this._dataRootDirectory = this._mysqlDirectory + "\\data";
-            this._dataDirectory = this._dataRootDirectory + "\\" + Guid.NewGuid() + "";
+            _mysqlDirectory = BaseDirHelper.GetBaseDir() + "\\tempServer";
+            _dataRootDirectory = _mysqlDirectory + "\\data";
+            _dataDirectory = string.Format("{0}\\{1}", _dataRootDirectory, Guid.NewGuid());
 
-            this.killProcesses();
+            killProcesses();
 
-            this.createDirs();
+            createDirs();
 
-            this.extractMySqlFiles();
+            extractMySqlFiles();
 
-            this._conStrFac = conStrFac;
+            _conStrFac = conStrFac;
         }
 
-    /*    private void removeDirs()
-        {
-            //Removing any previous data directories
-            new DirectoryInfo(this._dataRootDirectory).GetDirectories().ToList().ForEach(delegate(DirectoryInfo dir)
-            {
-                try
-                {
-                    dir.Delete(true);
-                }
-                catch (Exception)
-                {
-                    System.Console.WriteLine("Could not delete data directory" + dir.FullName);
-                }
-            });
-        }
-        */
+
         private void createDirs()
         {
-            string[] dirs = { this._mysqlDirectory, this._dataRootDirectory, this._dataDirectory };
+            var dirs = new string[] { _mysqlDirectory, _dataRootDirectory, _dataDirectory };
 
-            foreach (string dir in dirs) {
-                DirectoryInfo checkDir = new DirectoryInfo(dir);
+            foreach (string dir in dirs)
+            {
+                var checkDir = new DirectoryInfo(dir);
                 try
                 {
                     if (checkDir.Exists)
+                    {
                         checkDir.Delete(true);
-
+                    }
                     checkDir.Create();
                 }
-                catch(Exception)
+                catch (Exception)
                 {
-                    System.Console.WriteLine("Could not create or delete directory: " + checkDir.FullName);
+                    Console.WriteLine("Could not create or delete directory: " + checkDir.FullName);
                 }
             }
         }
 
         private void removeDirs()
         {
-            string[] dirs = { this._mysqlDirectory, this._dataRootDirectory, this._dataDirectory };
+            var dirs = new string[] { _mysqlDirectory, _dataRootDirectory, _dataDirectory };
 
             foreach (string dir in dirs)
             {
-                DirectoryInfo checkDir = new DirectoryInfo(dir);
+                var checkDir = new DirectoryInfo(dir);
                 try
                 {
                     if (checkDir.Exists)
+                    {
                         checkDir.Delete(true);
+                    }
                 }
                 catch (Exception)
                 {
-                    System.Console.WriteLine("Could not delete directory: ", checkDir.FullName);
+                    Console.WriteLine("Could not delete directory: ", checkDir.FullName);
                 }
             }
         }
 
         private void extractMySqlFiles()
         {
-            try { 
-                if (!new FileInfo(this._mysqlDirectory + "\\mysqld.exe").Exists) {
-                    //Extracting the two MySql files needed for the standalone server
-                    File.WriteAllBytes(this._mysqlDirectory + "\\mysqld.exe", Properties.Resources.mysqld);
-                    File.WriteAllBytes(this._mysqlDirectory + "\\errmsg.sys", Properties.Resources.errmsg);
+            try
+            {
+                if (!new FileInfo(_mysqlDirectory + "\\mysqld.exe").Exists)
+                {
+                    File.WriteAllBytes(_mysqlDirectory + "\\mysqld.exe", Properties.Resources.mysqld);
+                    File.WriteAllBytes(_mysqlDirectory + "\\errmsg.sys", Properties.Resources.errmsg);
                 }
             }
             catch
             {
-                throw;    
+                throw;
             }
         }
 
-        private void killProcesses()
+        private static void killProcesses()
         {
-            //Killing all processes with the name mysqld.exe
             foreach (var process in Process.GetProcessesByName("mysqld"))
             {
                 try
@@ -144,7 +134,7 @@ namespace MySql.Server
                 }
                 catch (Exception)
                 {
-                    System.Console.WriteLine("Tried to kill already existing mysqld process without success");
+                    Console.WriteLine("Tried to kill already existing mysqld process without success");
                 }
             }
         }
@@ -157,33 +147,35 @@ namespace MySql.Server
             {
                 "--standalone",
                 "--console",
-                "--basedir=" + "\"" + this._mysqlDirectory + "\"",
-                "--lc-messages-dir=" + "\"" + this._mysqlDirectory + "\"",
-                "--datadir=" + "\"" + this._dataDirectory + "\"",
+                string.Format("--basedir=\"{0}\"", _mysqlDirectory),
+                string.Format("--lc-messages-dir=\"{0}\"", _mysqlDirectory),
+                string.Format("--datadir=\"{0}\"", _dataDirectory),
                 "--skip-grant-tables",
                 "--enable-named-pipe",
-               // "--skip-networking",
+
                 "--innodb_fast_shutdown=2",
                 "--innodb_doublewrite=OFF",
                 "--innodb_log_file_size=1048576",
                 "--innodb_data_file_path=ibdata1:10M;ibdata2:10M:autoextend"
             };
 
-            _process.StartInfo.FileName = "\"" + this._mysqlDirectory + "\\mysqld.exe" + "\"";
+            _process.StartInfo.FileName = string.Format("\"{0}\\mysqld.exe\"", _mysqlDirectory);
             _process.StartInfo.Arguments = string.Join(" ", arguments);
             _process.StartInfo.UseShellExecute = false;
             _process.StartInfo.CreateNoWindow = true;
 
-            System.Console.WriteLine("Running " + _process.StartInfo.FileName + " " + String.Join(" ", arguments));
+            Console.WriteLine(string.Format("Running {0} {1}", _process.StartInfo.FileName, String.Join(" ", arguments)));
 
-            try { 
+            try
+            {
                 _process.Start();
             }
-            catch(Exception e){
+            catch (Exception e)
+            {
                 throw new Exception("Could not start server process: " + e.Message);
             }
 
-            this.waitForStartup();
+            waitForStartup();
         }
 
         /**
@@ -192,26 +184,27 @@ namespace MySql.Server
          **/
         private void waitForStartup()
         {
-            bool connected = false;
-            int waitTime = 0;
+            var connected = false;
+            var waitTime = 0;
 
-            Exception lastException = new Exception();
+            var lastException = new Exception();
 
             while (!connected)
             {
                 if (waitTime > 10000)
+                {
                     throw new Exception("Server could not be started.", lastException);
-
+                }
                 waitTime = waitTime + 500;
 
                 try
                 {
-                    this.OpenConnection(this._conStrFac.Server());
+                    OpenConnection(_conStrFac.Server());
                     connected = true;
 
-                    this.ExecuteNonQuery("CREATE DATABASE testserver;USE testserver;", false);
+                    ExecuteNonQuery("CREATE DATABASE testserver;USE testserver;", false);
 
-                    System.Console.WriteLine("Database connection established after " + waitTime.ToString() + " miliseconds");
+                    Console.WriteLine(string.Format("Database connection established after {0} miliseconds", waitTime));
                 }
                 catch (Exception e)
                 {
@@ -224,35 +217,41 @@ namespace MySql.Server
 
         private void ExecuteNonQuery(string query, bool useDatabase)
         {
-            string connectionString = useDatabase ? this._conStrFac.Database() : this._conStrFac.Server();
-            this.OpenConnection(connectionString);
+            var connectionString = useDatabase ? _conStrFac.Database() : _conStrFac.Server();
+            OpenConnection(connectionString);
             try
             {
-                MySqlCommand command = new MySqlCommand(query, this._myConnection);
-                command.ExecuteNonQuery();
+                using (var command = new MySqlCommand(query, _myConnection))
+                {
+                    command.ExecuteNonQuery();
+                }
             }
             catch (Exception e)
             {
-                System.Console.WriteLine("Could not execute non query: "  + e.Message);
+                Console.WriteLine("Could not execute non query: " + e.Message);
                 throw;
             }
-            finally{
-                this.CloseConnection();
+            finally
+            {
+                CloseConnection();
             }
         }
 
         public void ExecuteNonQuery(string query)
         {
-            this.ExecuteNonQuery(query, true);
+            ExecuteNonQuery(query, true);
         }
 
         public MySqlDataReader ExecuteReader(string query)
         {
-            this.OpenConnection(this._conStrFac.Database());
+            OpenConnection(_conStrFac.Database());
 
-            try {
-                MySqlCommand command = new MySqlCommand(query, this._myConnection);
-                return command.ExecuteReader();
+            try
+            {
+                using (var command = new MySqlCommand(query, _myConnection))
+                {
+                    return command.ExecuteReader();
+                }
             }
             catch (Exception)
             {
@@ -262,65 +261,76 @@ namespace MySql.Server
 
         private void OpenConnection(string connectionString)
         {
-            if (this._myConnection == null)
+            if (_myConnection == null)
             {
-                this._myConnection = new MySqlConnection(connectionString);
-
+                _myConnection = new MySqlConnection(connectionString);
             }
-            
-            if (this._myConnection.State != System.Data.ConnectionState.Open)
+
+            if (_myConnection.State != System.Data.ConnectionState.Open)
             {
-                this._myConnection.Open();
+                _myConnection.Open();
             }
         }
 
         public void CloseConnection()
         {
-            if(this._myConnection.State != System.Data.ConnectionState.Closed)
-                this._myConnection.Close();
+            if (_myConnection.State != System.Data.ConnectionState.Closed)
+            {
+                _myConnection.Close();
+            }
         }
 
         public void ShutDown()
         {
             try
             {
-                this.CloseConnection();
-                if (!this._process.HasExited)
+                CloseConnection();
+                if (!_process.HasExited)
                 {
-                    this._process.Kill();
+                    _process.Kill();
                 }
-                //System.Console.WriteLine("Process killed");
-                this._process.Dispose();
-                this._process = null;
-                this.killProcesses();
-                this.removeDirs();
+
+                _process.Dispose();
+                _process = null;
+                killProcesses();
+                removeDirs();
             }
             catch (Exception e)
             {
-                System.Console.WriteLine("Could not close database server process: " + e.Message);
+                Console.WriteLine("Could not close database server process: " + e.Message);
                 throw;
             }
         }
 
-        private bool disposed = false;
+        private bool disposed;
 
-        // Public implementation of Dispose pattern callable by consumers. 
+
         public void Dispose()
         {
             Dispose(true);
- //           GC.SuppressFinalize(this);
         }
 
-        // Protected implementation of Dispose pattern. 
+
         protected virtual void Dispose(bool disposing)
         {
             if (disposed)
+            {
                 return;
-
+            }
             if (disposing)
             {
-                this.CloseConnection();
-                this._myConnection.Dispose();
+                CloseConnection();
+                _myConnection.Dispose();
+                if (instance != null)
+                {
+                    instance.Dispose();
+                    instance = null;
+                }
+                if (_process != null)
+                {
+                    _process.Dispose();
+                    _process = null;
+                }
             }
 
             disposed = true;

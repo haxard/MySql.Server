@@ -2,16 +2,16 @@
 using System.Collections.Generic;
 using System.IO;
 
-namespace MySql.Server
+namespace MySql.Server.Library
 {
     internal class BaseDirHelper
     {
-        static string baseDir;
+        private static string baseDir;
         public static string GetBaseDir()
         {
             if (baseDir == null)
             {
-                baseDir = new DirectoryInfo(Directory.GetCurrentDirectory()).Parent.Parent.FullName.ToString();
+                baseDir = new DirectoryInfo(Directory.GetCurrentDirectory()).Parent.Parent.FullName;
             }
 
             return baseDir;
