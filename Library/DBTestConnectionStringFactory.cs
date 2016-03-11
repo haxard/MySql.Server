@@ -12,7 +12,7 @@ namespace MySql.Server.Library
 
         public string Database()
         {
-            return "Server=" + "127.0.0.1" + ";Database=testserver;Protocol=pipe;";
+            return Database("testserver");
         }
 
         /**

@@ -5,12 +5,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace MySql.Server.Library
 {
-    /**
-     * A singleton class controlling test database initializing and cleanup
-     */
+    
+    /// <summary>
+    /// A singleton class controlling test database initializing and cleanup
+    /// </summary>
     public class MySqlServer : IDisposable
     {
         private static MySqlServer instance;
@@ -34,16 +36,16 @@ namespace MySql.Server.Library
 
         private readonly IDBConnectionStringFactory _conStrFac;
 
-        private MySqlConnection _myConnection;
+        private MySqlConnection _connection;
         public MySqlConnection Connection
         {
             get
             {
-                if (_myConnection == null)
-                {
-                    OpenConnection(_conStrFac.Database());
-                }
-                return _myConnection;
+                if (_connection == null)
+                    _connection = OpenConnection(_conStrFac.Database());
+                if (_connection.State != System.Data.ConnectionState.Open)
+                    _connection.Open();
+                return _connection;
             }
         }
 
@@ -178,10 +180,9 @@ namespace MySql.Server.Library
             waitForStartup();
         }
 
-        /**
-         * Checks if the server is started. The most reliable way is simply to check
-         * if we can connect to it
-         **/
+        /// <summary>
+        /// Checks if the server is started. The most reliable way is simply to check if we can connect to it
+        /// </summary>
         private void waitForStartup()
         {
             var connected = false;
@@ -199,11 +200,9 @@ namespace MySql.Server.Library
 
                 try
                 {
-                    OpenConnection(_conStrFac.Server());
+                    _connection = OpenConnection(_conStrFac.Server());
                     connected = true;
-
                     ExecuteNonQuery("CREATE DATABASE testserver;USE testserver;", false);
-
                     Console.WriteLine(string.Format("Database connection established after {0} miliseconds", waitTime));
                 }
                 catch (Exception e)
@@ -215,16 +214,48 @@ namespace MySql.Server.Library
             }
         }
 
-        private void ExecuteNonQuery(string query, bool useDatabase)
+        #region Execute NonQuery
+       
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="parameters"></param>
+        /// <returns></returns>
+        public async Task ExecuteNonQueryAsync(string query, params KeyValuePair<string, object>[] parameters)
         {
-            var connectionString = useDatabase ? _conStrFac.Database() : _conStrFac.Server();
-            OpenConnection(connectionString);
+            using (var command = GenerateMySQLCommandFromQuery(query, parameters))
+            {
+               await ExecuteNonQueryAsync(command);
+            }
+        }
+
+        /// <summary>
+        /// Creates a command from the query and executes it. Supports parameterized queries
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="parameters"></param>
+        public void ExecuteNonQuery(string query, params KeyValuePair<string, object>[] parameters)
+        {
+            var task = ExecuteNonQueryAsync(query, parameters);
+            task.Wait();
+        }
+
+        /// <summary>
+        /// TODO: Make this method static
+        /// </summary>
+        /// <param name="command"></param>
+        /// <param name="useDatabase"></param>
+        private async Task ExecuteNonQueryAsync(MySqlCommand command, bool useDatabase = true)
+        {
             try
             {
-                using (var command = new MySqlCommand(query, _myConnection))
-                {
-                    command.ExecuteNonQuery();
-                }
+                var connectionString = useDatabase ? _conStrFac.Database() : _conStrFac.Server();
+                _connection = OpenConnection(connectionString);
+                command.Connection = Connection;
+                if (!command.IsPrepared)
+                    command.Prepare();
+                await command.ExecuteNonQueryAsync();   //TODO: is MySQL.data actually async? https://bugs.mysql.com/bug.php?id=70111
             }
             catch (Exception e)
             {
@@ -237,47 +268,147 @@ namespace MySql.Server.Library
             }
         }
 
-        public void ExecuteNonQuery(string query)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="useDatabase"></param>
+        /// <param name="parameters"></param>
+        protected void ExecuteNonQuery(string query, bool useDatabase = true, params KeyValuePair<string, object>[] parameters)
         {
-            ExecuteNonQuery(query, true);
+            using (var command = GenerateMySQLCommandFromQuery(query, parameters))
+            {
+                var task = ExecuteNonQueryAsync(command, useDatabase);
+                task.Wait();
+            }
+        }
+#endregion  
+
+        #region Execute Reader
+        
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="parameters"></param>
+        /// <returns></returns>
+        public async Task<MySqlDataReader> ExecuteReaderAsync(string query, params KeyValuePair<string, object>[] parameters)
+        {
+            using (var command = GenerateMySQLCommandFromQuery(query, parameters))
+            {
+                return await ExecuteReaderAsync(command);
+            }
         }
 
-        public MySqlDataReader ExecuteReader(string query)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="parameters"></param>
+        public MySqlDataReader ExecuteReader(string query, params KeyValuePair<string, object>[] parameters)
         {
-            OpenConnection(_conStrFac.Database());
+            var task = ExecuteReaderAsync(query, parameters);
+            task.Wait();
+            return task.Result;
+        }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="command"></param>
+        /// <returns></returns>
+        private async Task<MySqlDataReader> ExecuteReaderAsync(MySqlCommand command)
+        {
             try
             {
-                using (var command = new MySqlCommand(query, _myConnection))
-                {
-                    return command.ExecuteReader();
-                }
+                command.Connection = Connection; 
+                if (!command.IsPrepared)
+                    command.Prepare();
+                return await Task.Run(() => command.ExecuteReader()); //TODO: is MySQL.data actually async? https://bugs.mysql.com/bug.php?id=
             }
-            catch (Exception)
+            catch (Exception e)
             {
+                Console.WriteLine("Could not execute query: " + e.Message);
                 throw;
             }
         }
+        #endregion
 
-        private void OpenConnection(string connectionString)
+        #region Execute Scalar
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="parameters"></param>
+        /// <returns></returns>
+        public async Task<object> ExecuteScalarAsync(string query, params KeyValuePair<string, object>[] parameters)
         {
-            if (_myConnection == null)
+            using (var command = GenerateMySQLCommandFromQuery(query, parameters))
             {
-                _myConnection = new MySqlConnection(connectionString);
+                return await ExecuteScalarAsync(command);
             }
+        }
 
-            if (_myConnection.State != System.Data.ConnectionState.Open)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="query"></param>
+        /// <param name="parameters"></param>
+        public object ExecuteScalar(string query, params KeyValuePair<string, object>[] parameters)
+        {
+            var task = ExecuteScalarAsync(query, parameters);
+            task.Wait();
+            return task.Result;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="command"></param>
+        /// <returns></returns>
+        private async Task<object> ExecuteScalarAsync(MySqlCommand command)
+        {
+            try
             {
-                _myConnection.Open();
+                command.Connection = Connection;
+                if (!command.IsPrepared)
+                    command.Prepare();
+                return await command.ExecuteScalarAsync(); //TODO: is MySQL.data actually async? https://bugs.mysql.com/bug.php?id=70111
             }
+            catch (Exception e)
+            {
+                Console.WriteLine("Could not execute query: " + e.Message);
+                throw;
+            }
+        }
+        #endregion
+
+        /// <summary>
+        /// Takes a query and returns a MySQLCommand. Supports parameterized queries
+        /// </summary>
+        /// <param name="query">The query text</param>
+        /// <param name="parameters">Collection of parameters</param>
+        /// <returns>A MySQLCommand which can be executed against a database connection</returns>
+        private static MySqlCommand GenerateMySQLCommandFromQuery(string query, params KeyValuePair<string, object>[] parameters)
+        {
+            var command = new MySqlCommand(query);
+            foreach (KeyValuePair<string, object> kvp in parameters)
+                command.Parameters.AddWithValue(kvp.Key, kvp.Value);
+            return command;
+        }
+
+        private MySqlConnection OpenConnection(string connectionString)
+        {
+            MySqlConnection conn = new MySqlConnection(connectionString);
+            conn.Open();
+            return conn;
         }
 
         public void CloseConnection()
         {
-            if (_myConnection.State != System.Data.ConnectionState.Closed)
-            {
-                _myConnection.Close();
-            }
+            if (_connection.State != System.Data.ConnectionState.Closed)
+                _connection.Close();
         }
 
         public void ShutDown()
@@ -303,14 +434,10 @@ namespace MySql.Server.Library
         }
 
         private bool disposed;
-
-
         public void Dispose()
         {
             Dispose(true);
         }
-
-
         protected virtual void Dispose(bool disposing)
         {
             if (disposed)
@@ -320,7 +447,7 @@ namespace MySql.Server.Library
             if (disposing)
             {
                 CloseConnection();
-                _myConnection.Dispose();
+                _connection.Dispose();
                 if (instance != null)
                 {
                     instance.Dispose();
